@@ -118,6 +118,7 @@
   .viewer td select:disabled { appearance: none; -webkit-appearance: none; }
   .viewer .linkcell, .viewer .tag, .viewer td textarea { cursor: default; }
   .viewer .linkcell:hover { background: none; }
+  .viewer #memberFilter, .viewer .l-none, .viewer #pointsCard th:last-child { display: none !important; }
   /* Impression / PDF : zone dédiée, le reste de la page est masqué */
   #printArea { display: none; }
   @media print {
@@ -138,7 +139,7 @@
 <div id="printArea"></div>
 
 <div class="card">
-  <div class="row" style="margin-bottom:8px">
+  <div class="row" id="typeRow" style="margin-bottom:8px">
     <strong style="min-width:70px">Type :</strong>
     <div class="tags" id="typeTags" style="margin-top:0"></div>
   </div>
@@ -364,6 +365,7 @@ function renderTypeTags() {
     tags.push(`<span class="mtag type ${S.curType === 0 ? 'sel' : ''}" data-id="0" title="Réunions sans type">Sans type</span>`);
   }
   $('typeTags').innerHTML = tags.join('') || '<span class="muted">Aucun type — renseigne la table « Type » dans Grist.</span>';
+  $('typeRow').style.display = viewType() ? 'none' : '';
   const ct = S.types.find(t => t.id === S.curType);
   $('newLabel').textContent = ct ? `Nouvelle réunion « ${ct.Code} » :` : 'Nouvelle réunion :';
 }
@@ -440,7 +442,7 @@ function renderPresence() {
   const withP = new Set(S.presences.filter(p => p.Reunion === S.current).map(p => p.Membre));
   const showAll = $('showAllMembers').checked;
   const html = S.members
-    .filter(m => showAll || withP.has(m.id) || inComm(m, S.curType))
+    .filter(m => VIEW ? withP.has(m.id) : (showAll || withP.has(m.id) || inComm(m, S.curType)))
     .filter(m => !filter || (memberLabel(m) + ' ' + (m.Direction || '') + ' ' + (m.Site || '')).toLowerCase().includes(filter))
     .map(m => {
       const p = presenceOf(m.id);
@@ -448,7 +450,8 @@ function renderPresence() {
       const title = [m.Direction, m.Site].filter(Boolean).join(' · ') + (p ? ` — ${p.Statut}` : '');
       return `<span class="tag ${c}" data-member="${m.id}" title="${esc(title)}">${esc(memberLabel(m) || '(sans nom)')}</span>`;
     }).join('');
-  $('tags').innerHTML = html || '<span class="muted">Aucun membre dans cette communauté — ajoute-en dans « Membres des communautés » ou coche « Tous les membres ».</span>';
+  $('tags').innerHTML = html || (VIEW ? '<span class="muted">Aucune présence renseignée.</span>'
+      : '<span class="muted">Aucun membre dans cette communauté — ajoute-en dans « Membres des communautés » ou coche « Tous les membres ».</span>');
 
   const counts = { 'Présent': 0, 'Excusé': 0, 'Absent': 0 };
   S.presences.filter(p => p.Reunion === S.current).forEach(p => { if (counts[p.Statut] !== undefined) counts[p.Statut]++; });
@@ -466,6 +469,7 @@ function renderPoints() {
   card.style.display = S.current ? '' : 'none';
   if (!S.current) return;
   const rows = pointsOfCurrent();
+  if (VIEW) { renderPointsView(rows); return; }
   $('tbody').innerHTML = rows.map(p => `
     <tr data-id="${p.id}" class="${p.Urgent ? 'urgent' : ''}">
       <td class="ordre">
@@ -498,6 +502,20 @@ function renderPoints() {
     `<tr><td colspan="5" class="muted" style="text-align:center;padding:16px">Aucun point. Clique sur « Ajouter un point ».</td></tr>`;
   document.querySelectorAll('#tbody textarea').forEach(autosize);
   lockViewer();
+}
+
+function renderPointsView(rows) {
+  $('tbody').innerHTML = rows.map(p => `
+    <tr data-id="${p.id}" class="${p.Urgent ? 'urgent' : ''}">
+      <td class="ro pw ordre"><strong>${esc(p.Sujet)}</strong>${bf('Détail', p.Detail)}</td>
+      <td class="ro pw cr">${bf('Discussion', p.Discussion, true)}${bf('Décision', p.Decision)}</td>
+      <td class="ro cr">
+        ${p.Qui ? `<div class="bf pw"><span class="lbl" style="margin-top:0">Qui</span>${esc(p.Qui)}</div>` : ''}
+        <div class="meta">${p.Urgent ? '<span class="urg on">Urgent</span>' : '<span></span>'}${linkIcon(p.Lien)}</div>
+      </td>
+      <td class="cr sv" data-suivi="${esc(p.Suivi)}"><select disabled><option>${esc(p.Suivi)}</option></select></td>
+    </tr>`).join('') ||
+    `<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">Aucun point pour cette réunion.</td></tr>`;
 }
 
 function autosize(el) {
@@ -658,6 +676,7 @@ function renderBacklog() {
   const rows = backlogPoints();
   const nOpen = rows.filter(p => OPEN.includes(p.Suivi)).length;
   $('backlogSummary').textContent = `— ${nOpen} à traiter`;
+  if (VIEW) card.style.display = nOpen ? '' : 'none';
   $('backlogBody').innerHTML = rows.map(p => `
     <tr data-id="${p.id}" class="${p.Urgent ? 'urgent' : ''}">
       <td class="ro">${esc(fmtShort(byId.get(p.Reunion).Date))}</td>
