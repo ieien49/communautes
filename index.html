@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Suivi des réunions</title>
+<script src="https://docs.getgrist.com/grist-plugin-api.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --border: #d9dde3; --text: #1f2933; --muted: #6b7785;
+    --primary: #2f6fed; --ordre: #eef3ff; --cr: #f0faf3;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 12px; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+         font-size: 14px; color: var(--text); background: var(--bg); }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  select, input[type=text], input[type=date], textarea {
+    font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: var(--text);
+  }
+  select:focus, input:focus, textarea:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+  button { font: inherit; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; }
+  button:hover { background: #eef1f5; }
+  button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  button.primary:hover { background: #2559c4; }
+  #olderSelect { font-size: 13px; }
+  #olderSelect[hidden] { display: none; }
+  .mtag { user-select: none; cursor: pointer; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border);
+          background: #fff; color: var(--text); font-size: 13px; }
+  .mtag:hover { background: #eef3ff; border-color: var(--primary); }
+  .mtag.type { font-weight: 600; border-radius: 6px; }
+  .mtag.sel { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .error { background: #fdecec; border: 1px solid #f3b4b4; color: #8a1f1f; padding: 10px; border-radius: 6px; margin-bottom: 12px; }
+
+  /* Présences */
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .tag { user-select: none; cursor: pointer; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border);
+         background: #f1f3f6; color: var(--muted); font-size: 13px; }
+  .tag.present { background: #d6f5dc; border-color: #7ccf8c; color: #14532d; font-weight: 600; }
+  .tag.excuse  { background: #fff0c9; border-color: #e6bf55; color: #7a5200; font-weight: 600; }
+  .tag.absent  { background: #fddcdc; border-color: #e68a8a; color: #8a1f1f; font-weight: 600; text-decoration: line-through; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+  .legend .l-none::before { background: #c9ced6; } .legend .l-present::before { background: #4caf63; }
+  .legend .l-excuse::before { background: #e6bf55; } .legend .l-absent::before { background: #e05a5a; }
+
+  /* Tableau */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; min-width: 950px; }
+  th, td { border: 1px solid var(--border); padding: 4px; vertical-align: top; }
+  th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; padding: 6px; }
+  th.ordre { background: var(--ordre); } th.cr { background: var(--cr); }
+  td.ordre { background: #fbfcff; } td.cr { background: #fcfffd; }
+  td textarea, td input[type=text], td select { width: 100%; border-color: transparent; background: transparent; resize: none; overflow: hidden; }
+  td textarea:hover, td input[type=text]:hover, td select:hover { border-color: var(--border); }
+  td textarea:focus, td input[type=text]:focus, td select:focus { background: #fff; }
+  td.center { text-align: center; vertical-align: middle; }
+  tr.urgent td:first-child { box-shadow: inset 5px 0 0 #e05a5a; }
+  tr.urgent td.ordre:first-child { background: #fff5f5; }
+  input[type=checkbox] { width: 18px; height: 18px; cursor: pointer; accent-color: #e05a5a; }
+  /* Couleur du champ Suivi selon la valeur */
+  td.sv, th.svh { width: 1%; white-space: nowrap; }
+  td.sv select { width: auto; font-weight: 600; cursor: pointer; }
+  .sv[data-suivi="A faire"]    { background: #fddcdc; } .sv[data-suivi="A faire"] select    { color: #b91c1c; }
+  .sv[data-suivi="En attente"] { background: #ffe9c7; } .sv[data-suivi="En attente"] select { color: #9a5b00; }
+  .sv[data-suivi="Réalisé"]    { background: #d6f5dc; } .sv[data-suivi="Réalisé"] select    { color: #14532d; }
+  .sv[data-suivi="Annulé"]     { background: #e5e7eb; } .sv[data-suivi="Annulé"] select     { color: #4b5563; text-decoration: line-through; }
+  .sv[data-suivi="Pour information"] { background: #ece4fb; } .sv[data-suivi="Pour information"] select { color: #5b21b6; }
+  /* Champs empilés dans une cellule */
+  .lbl { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); margin: 6px 0 0 4px; }
+  .lbl:first-child { margin-top: 2px; }
+  td textarea[data-f="Sujet"] { font-weight: 600; }
+  .meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; padding: 0 4px; min-height: 24px; }
+  .urg { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; opacity: 0; transition: opacity .15s; }
+  tr:hover .urg, .urg.on, .urg:focus-within { opacity: 1; }
+  .urg.on { color: #b91c1c; font-weight: 600; }
+  @media (hover: none) { td select.pick, .urg, .linkcell.empty .editlink { opacity: 1; } }
+  .linkcell { cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 2px 6px; border-radius: 6px; font-size: 12px; color: var(--muted); }
+  .linkcell:hover { background: #e3ecff; }
+  .linkcell .editlink { opacity: .6; }
+  .linkcell.empty .editlink { opacity: 0; }
+  tr:hover .linkcell.empty .editlink { opacity: .6; }
+  .pw { white-space: pre-wrap; }
+  .bf { margin-top: 4px; }
+  /* Sélecteur de membre sous le champ Qui */
+  td select.pick { margin-top: 2px; font-size: 12px; color: var(--muted); border-color: var(--border); opacity: 0; transition: opacity .15s; }
+  td:hover select.pick, td select.pick:focus { opacity: 1; }
+  /* Points en suspens */
+  details.card > summary { cursor: pointer; }
+  details.card[open] > summary { margin-bottom: 8px; }
+  #backlogCard table { min-width: 900px; }
+  td.ro { padding: 6px; vertical-align: top; }
+  a.lnkicon { text-decoration: none; font-size: 16px; }
+  a.lnkicon:hover { filter: brightness(1.3); }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 12px; }
+  .modal[hidden] { display: none; }
+  .modal-box { background: #fff; border-radius: 10px; padding: 16px; width: min(560px, 100%); box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+  .modal-box input { width: 100%; margin-top: 8px; }
+  .del { border: none; background: transparent; color: #a0a8b3; font-size: 16px; padding: 2px 6px; }
+  .del:hover { color: #c0392b; background: transparent; }
+  .toolbar { margin-top: 10px; }
+  /* Gestion des membres */
+  #membersCard table { min-width: 820px; }
+  #membersCard td input[type=text] { width: 100%; border-color: transparent; background: transparent; }
+  #membersCard td input[type=text]:hover { border-color: var(--border); }
+  #membersCard td input[type=text]:focus { background: #fff; }
+  .comm { display: flex; flex-wrap: wrap; gap: 4px; }
+  .comm label { cursor: pointer; user-select: none; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border);
+                background: #f1f3f6; color: var(--muted); font-size: 12px; }
+  .comm label.on { background: var(--ordre); border-color: var(--primary); color: var(--primary); font-weight: 600; }
+  .comm input { display: none; }
+  .banner { background: #fff7e0; border: 1px solid #e6bf55; color: #7a5200; padding: 10px; border-radius: 6px; margin-top: 8px; }
+  /* Mode visualiseur (?mode=view_agent | view_manager) */
+  .viewer .admin-only, .viewer .editlink, .viewer .del, .viewer td select.pick, .viewer #pointsCard .toolbar { display: none !important; }
+  .viewer select:disabled, .viewer input:disabled { opacity: 1; cursor: default; }
+  .viewer td select:disabled { appearance: none; -webkit-appearance: none; }
+  .viewer .linkcell, .viewer .tag, .viewer td textarea { cursor: default; }
+  .viewer .linkcell:hover { background: none; }
+  /* Impression / PDF : zone dédiée, le reste de la page est masqué */
+  #printArea { display: none; }
+  @media print {
+    body { background: #fff; padding: 0; }
+    body > *:not(#printArea) { display: none !important; }
+    #printArea { display: block; color: #000; font-size: 11pt; }
+    #printArea h1 { font-size: 16pt; margin: 0 0 8px; }
+    #printArea h2 { font-size: 12pt; margin: 14px 0 6px; border-bottom: 1px solid #999; }
+    #printArea table { min-width: 0; width: 100%; }
+    #printArea th, #printArea td { border: 1px solid #999; padding: 4px 6px; font-size: 10pt; }
+    #printArea tr { break-inside: avoid; }
+    #printArea thead { display: table-header-group; }
+  }
+</style>
+</head>
+<body>
+<div id="error"></div>
+<div id="printArea"></div>
+
+<div class="card">
+  <div class="row" style="margin-bottom:8px">
+    <strong style="min-width:70px">Type :</strong>
+    <div class="tags" id="typeTags" style="margin-top:0"></div>
+  </div>
+  <div class="row">
+    <strong style="min-width:70px">Réunion :</strong>
+    <div class="tags" id="meetingTags" style="margin-top:0"></div>
+    <select id="olderSelect" hidden></select>
+    <button id="printBtn" style="margin-left:auto" title="Imprimer ou enregistrer en PDF">🖨 Imprimer / PDF</button>
+    <span class="muted admin-only" id="newLabel" style="margin-left:12px">Nouvelle réunion :</span>
+    <input type="date" id="newDate" class="admin-only">
+    <button class="primary admin-only" id="addMeeting">Créer</button>
+  </div>
+  <div class="row admin-only" id="meetingEdit" style="margin-top:8px; padding-top:8px; border-top:1px solid var(--border)">
+    <span class="muted">Réunion sélectionnée :</span>
+    <input type="date" id="editDate">
+    <select id="editType"></select>
+    <button id="saveMeeting">Enregistrer</button>
+    <button id="delMeeting" style="margin-left:auto; color:#b91c1c">Supprimer la réunion</button>
+  </div>
+</div>
+
+<details class="card" id="presenceCard" open>
+  <summary><strong>Présences</strong> <span class="muted" id="presenceSummary"></span></summary>
+  <div class="row">
+    <input type="text" id="memberFilter" placeholder="Filtrer les membres…" style="min-width:220px">
+    <label class="muted admin-only"><input type="checkbox" id="showAllMembers"> Tous les membres</label>
+    <div class="legend muted">
+      <span class="l-none">Non renseigné</span><span class="l-present">Présent</span>
+      <span class="l-excuse">Excusé</span><span class="l-absent">Absent</span>
+    </div>
+  </div>
+  <div class="tags" id="tags"></div>
+  <div class="muted admin-only" style="margin-top:6px">Clic sur un nom : Présent → Excusé → Absent → Non renseigné.</div>
+</details>
+
+<details class="card admin-only" id="membersCard">
+  <summary><strong>Membres des communautés</strong> <span class="muted" id="membersSummary"></span></summary>
+  <div id="membersBanner"></div>
+  <div class="row" style="margin-top:8px">
+    <select id="mCommFilter"></select>
+    <input type="text" id="mFilter" placeholder="Filtrer…" style="min-width:180px">
+    <button class="primary" id="addMember" style="margin-left:auto">+ Ajouter un membre</button>
+  </div>
+  <div class="table-wrap" style="margin-top:8px">
+    <table>
+      <thead><tr><th style="width:14%">Prénom</th><th style="width:16%">Nom</th><th style="width:16%">Direction</th><th style="width:14%">Site</th><th>Communautés</th><th style="width:3%"></th></tr></thead>
+      <tbody id="membersBody"></tbody>
+    </table>
+  </div>
+</details>
+
+<details class="card" id="backlogCard" open>
+  <summary><strong>Points en suspens des réunions précédentes</strong> <span class="muted">(même type)</span> <span class="muted" id="backlogSummary"></span></summary>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:8%">Réunion</th>
+          <th style="width:30%">Ordre du jour <span class="muted">(Sujet · Détail)</span></th>
+          <th style="width:35%">Compte rendu <span class="muted">(Discussion · Décision)</span></th>
+          <th style="width:19%">Qui · Urgent · Lien</th>
+          <th class="svh">Suivi</th>
+        </tr>
+      </thead>
+      <tbody id="backlogBody"></tbody>
+    </table>
+  </div>
+  <div class="muted admin-only" style="margin-top:6px">Tu peux changer le Suivi et l'Urgence directement ici. La ligne reste affichée jusqu'au changement de réunion.</div>
+</details>
+
+<div class="card" id="pointsCard">
+  <h2>Ordre du jour et compte rendu</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="ordre" style="width:30%">Ordre du jour <span class="muted">(Sujet · Détail)</span></th>
+          <th class="cr" style="width:39%">Compte rendu <span class="muted">(Discussion · Décision)</span></th>
+          <th class="cr" style="width:21%">Qui · Urgent · Lien</th>
+          <th class="cr svh">Suivi</th>
+          <th style="width:3%"></th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div class="toolbar"><button class="primary" id="addPoint">+ Ajouter un point</button></div>
+</div>
+
+<div id="linkModal" class="modal" hidden>
+  <div class="modal-box">
+    <h2>Lien du point</h2>
+    <div class="muted" id="linkModalTitle"></div>
+    <input type="text" id="linkInput" placeholder="https://…">
+    <div class="row" style="margin-top:12px; justify-content:flex-end">
+      <button id="linkClear" style="margin-right:auto">Effacer le lien</button>
+      <button id="linkTest">Tester ↗</button>
+      <button id="linkCancel">Annuler</button>
+      <button class="primary" id="linkSave">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============ Configuration (noms des tables / colonnes) ============ */
+const T = { reunions: 'Reunions', membres: 'Membres', presences: 'Presences', points: 'Points', types: 'Type' };
+const STATUTS = ['Présent', 'Excusé', 'Absent'];
+const SUIVIS  = ['A faire', 'En attente', 'Réalisé', 'Annulé', 'Pour information'];
+
+/* ============ État ============ */
+const S = { meetings: [], members: [], presences: [], points: [], types: [], curType: null, current: null, keep: new Set() };
+const OPEN = ['A faire', 'En attente'];
+const COMM = 'Communautes';             // colonne RefList:Type de la table Membres
+S.hasComm = false; S.mComm = 'all';     // mComm : filtre de la liste de gestion ('all' | 'none' | id de type)
+const commOf = (m) => (Array.isArray(m[COMM]) && m[COMM][0] === 'L') ? m[COMM].slice(1) : [];
+// Sans colonne Communautes, ou réunion « sans type » : tout le monde (comportement d'origine)
+const inComm = (m, typeId) => !S.hasComm || !typeId || commOf(m).includes(typeId);
+// Mode : ?mode=admin (défaut) | view_agent | view_manager ; toute autre valeur = lecture seule
+const MODE = (new URLSearchParams(location.search).get('mode') || 'admin').toLowerCase();
+const VIEW = MODE !== 'admin';
+const VIEW_KEY = MODE === 'view_agent' ? 'agent' : MODE === 'view_manager' ? 'manager' : null;
+document.body.classList.toggle('viewer', VIEW);
+// Communauté imposée en mode view_* : code (sinon titre) contenant « agent » / « manager »
+const viewType = () => !VIEW_KEY ? null :
+  (S.types.find(t => (t.Code || '').toLowerCase().includes(VIEW_KEY)) ||
+   S.types.find(t => (t.Titre || '').toLowerCase().includes(VIEW_KEY)) || null);
+function lockViewer() {
+  if (!VIEW) return;
+  document.querySelectorAll('#tbody textarea').forEach(t => t.readOnly = true);
+  document.querySelectorAll('#tbody select, #tbody input, #backlogBody select, #backlogBody input').forEach(x => x.disabled = true);
+}
+
+/* ============ Utilitaires ============ */
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function fetchRows(name) {
+  const t = await grist.docApi.fetchTable(name);
+  const keys = Object.keys(t);
+  const n = (t.id || []).length;
+  const rows = [];
+  for (let i = 0; i < n; i++) {
+    const r = {};
+    keys.forEach(k => r[k] = t[k][i]);
+    rows.push(r);
+  }
+  rows.cols = keys;
+  return rows;
+}
+
+async function act(actions) {
+  if (VIEW) throw new Error('Mode lecture seule');
+  const res = await grist.docApi.applyUserActions(actions);
+  return res && res.retValues ? res.retValues : [];
+}
+
+function fmtDate(sec) {
+  if (typeof sec !== 'number') return '(sans date)';
+  return new Date(sec * 1000).toLocaleDateString('fr-FR', { timeZone: 'UTC', weekday: 'short', day: '2-digit', month: 'long', year: 'numeric' });
+}
+const safeUrl = (u) => /^https?:\/\//i.test(u || '') ? u : '';
+const normalizeUrl = (u) => {
+  u = (u || '').trim();
+  if (u && !/^[a-z][a-z0-9+.-]*:/i.test(u)) u = 'https://' + u;
+  return u;
+};
+const linkCellInner = (u) => linkIcon(u) + `<span class="editlink">${safeUrl(u) ? '✎' : '＋ lien'}</span>`;
+const linkIcon = (u) => safeUrl(u)
+  ? `<a class="lnkicon" href="${esc(u)}" target="_blank" rel="noopener noreferrer" title="Ouvrir le lien">🔗</a>` : '';
+const memberLabel = (m) => `${m.Prenom || ''} ${m.Nom || ''}`.trim();
+
+function showError(msg) {
+  $('error').innerHTML = msg ? `<div class="error">${msg}</div>` : '';
+}
+
+/* ============ Chargement ============ */
+async function loadAll() {
+  try {
+    const [reunions, membres, presences, points, types] = await Promise.all([
+      fetchRows(T.reunions), fetchRows(T.membres), fetchRows(T.presences), fetchRows(T.points), fetchRows(T.types)
+    ]);
+    S.types = types.sort((a, b) => (a.Code || '').localeCompare(b.Code || '', 'fr'));
+    S.meetings = reunions.sort((a, b) => (b.Date || 0) - (a.Date || 0));
+    S.members = membres.sort((a, b) =>
+      (a.Nom || '').localeCompare(b.Nom || '', 'fr') || (a.Prenom || '').localeCompare(b.Prenom || '', 'fr'));
+    S.hasComm = (membres.cols || []).includes(COMM);
+    S.presences = presences;
+    S.points = points;
+    { const vt = viewType(); if (vt) S.curType = vt.id; }
+    // Type sélectionné : on garde l'actuel s'il est valide, sinon celui de la réunion ouverte, sinon le premier
+    if (!typeIsValid(S.curType)) {
+      const cm = S.meetings.find(m => m.id === S.current);
+      S.curType = cm ? (cm.Type || 0) : (S.types.length ? S.types[0].id : 0);
+      if (!typeIsValid(S.curType)) S.curType = S.types.length ? S.types[0].id : 0;
+    }
+    const list = meetingsOfType();
+    if (!list.find(m => m.id === S.current)) {
+      S.current = list.length ? list[0].id : null;
+    }
+    showError(VIEW_KEY && !viewType() ? `Aucune communauté dont le code contient « ${VIEW_KEY} » dans la table « ${T.types} ».` : '');
+    renderAll();
+  } catch (e) {
+    console.error(e);
+    showError(`Impossible de charger les tables (${esc(Object.values(T).join(', '))}). ` +
+      `Vérifie que les tables existent, que les noms de colonnes sont exacts et que le widget a l'accès « Full document access ». ` +
+      `<br><small>${esc(e.message || e)}</small>`);
+  }
+}
+
+/* ============ Types de réunions ============ */
+const hasUntyped = () => S.meetings.some(m => !m.Type);
+function typeIsValid(t) {
+  if (t === null || t === undefined) return false;
+  if (S.types.some(x => x.id === t)) return true;
+  return t === 0 && (S.types.length === 0 || hasUntyped());
+}
+const meetingsOfType = () => S.meetings.filter(m => (m.Type || 0) === S.curType);   // déjà triées par date décroissante
+
+function renderTypeTags() {
+  const tags = (viewType() ? [viewType()] : S.types).map(t =>
+    `<span class="mtag type ${t.id === S.curType ? 'sel' : ''}" data-id="${t.id}"${t.Titre ? ` title="${esc(t.Titre)}"` : ''}>${esc(t.Code || '(sans code)')}</span>`);
+  if (!viewType() && S.types.length && hasUntyped()) {
+    tags.push(`<span class="mtag type ${S.curType === 0 ? 'sel' : ''}" data-id="0" title="Réunions sans type">Sans type</span>`);
+  }
+  $('typeTags').innerHTML = tags.join('') || '<span class="muted">Aucun type — renseigne la table « Type » dans Grist.</span>';
+  const ct = S.types.find(t => t.id === S.curType);
+  $('newLabel').textContent = ct ? `Nouvelle réunion « ${ct.Code} » :` : 'Nouvelle réunion :';
+}
+
+function selectType(id) {
+  S.curType = id;
+  const list = meetingsOfType();
+  S.current = list.length ? list[0].id : null;     // la plus récente de ce type
+  S.keep.clear();
+  $('presenceCard').open = true;
+  renderAll();
+}
+
+/* ============ Rendu ============ */
+function renderAll() {
+  renderTypeTags();
+  renderMeetingTags();
+  renderPresence();
+  renderBacklog();
+  renderPoints();
+  renderMembers();
+  renderMeetingEdit();
+}
+
+const MAX_TAGS = VIEW ? 200 : 10;   // nombre de réunions affichées sous forme de tags (les plus récentes)
+const tagDate = (sec) => typeof sec === 'number'
+  ? new Date(sec * 1000).toLocaleDateString('fr-FR', { timeZone: 'UTC', day: '2-digit', month: '2-digit', year: 'numeric' })
+  : '(sans date)';
+
+function renderMeetingTags() {
+  const box = $('meetingTags');
+  const older = $('olderSelect');
+  const list = meetingsOfType();
+  if (!list.length) {
+    box.innerHTML = '<span class="muted">Aucune réunion de ce type — crée-en une →</span>';
+    older.hidden = true;
+    return;
+  }
+  const recent = list.slice(0, MAX_TAGS);
+  const rest = list.slice(MAX_TAGS);
+  const shown = recent.slice();
+  const cur = list.find(m => m.id === S.current);
+  if (cur && !shown.includes(cur)) shown.push(cur);      // la réunion ouverte reste visible même si ancienne
+  box.innerHTML = shown.map(m =>
+    `<span class="mtag ${m.id === S.current ? 'sel' : ''}" data-id="${m.id}">${esc(tagDate(m.Date))}</span>`
+  ).join('');
+  const others = rest.filter(m => !shown.includes(m));
+  older.hidden = !others.length;
+  older.innerHTML = '<option value="">Réunions plus anciennes…</option>' +
+    others.map(m => `<option value="${m.id}">${esc(fmtDate(m.Date))}</option>`).join('');
+}
+
+function selectMeeting(id) {
+  S.current = id || null;
+  S.keep.clear();
+  $('presenceCard').open = true;      // la liste des participants s'affiche à l'ouverture d'une réunion
+  renderMeetingTags();
+  renderPresence();
+  renderBacklog();
+  renderPoints();
+  renderMeetingEdit();
+}
+
+function presenceOf(memberId) {
+  return S.presences.find(p => p.Reunion === S.current && p.Membre === memberId);
+}
+
+function renderPresence() {
+  const card = $('presenceCard');
+  card.style.display = S.current ? '' : 'none';
+  if (!S.current) return;
+  const filter = $('memberFilter').value.trim().toLowerCase();
+  const cls = { 'Présent': 'present', 'Excusé': 'excuse', 'Absent': 'absent' };
+  const withP = new Set(S.presences.filter(p => p.Reunion === S.current).map(p => p.Membre));
+  const showAll = $('showAllMembers').checked;
+  const html = S.members
+    .filter(m => showAll || withP.has(m.id) || inComm(m, S.curType))
+    .filter(m => !filter || (memberLabel(m) + ' ' + (m.Direction || '') + ' ' + (m.Site || '')).toLowerCase().includes(filter))
+    .map(m => {
+      const p = presenceOf(m.id);
+      const c = p ? (cls[p.Statut] || '') : '';
+      const title = [m.Direction, m.Site].filter(Boolean).join(' · ') + (p ? ` — ${p.Statut}` : '');
+      return `<span class="tag ${c}" data-member="${m.id}" title="${esc(title)}">${esc(memberLabel(m) || '(sans nom)')}</span>`;
+    }).join('');
+  $('tags').innerHTML = html || '<span class="muted">Aucun membre dans cette communauté — ajoute-en dans « Membres des communautés » ou coche « Tous les membres ».</span>';
+
+  const counts = { 'Présent': 0, 'Excusé': 0, 'Absent': 0 };
+  S.presences.filter(p => p.Reunion === S.current).forEach(p => { if (counts[p.Statut] !== undefined) counts[p.Statut]++; });
+  $('presenceSummary').textContent = `— ${counts['Présent']} présent(s), ${counts['Excusé']} excusé(s), ${counts['Absent']} absent(s)`;
+
+}
+
+function pointsOfCurrent() {
+  return S.points.filter(p => p.Reunion === S.current)
+    .sort((a, b) => (a.Ordre || 0) - (b.Ordre || 0) || a.id - b.id);
+}
+
+function renderPoints() {
+  const card = $('pointsCard');
+  card.style.display = S.current ? '' : 'none';
+  if (!S.current) return;
+  const rows = pointsOfCurrent();
+  $('tbody').innerHTML = rows.map(p => `
+    <tr data-id="${p.id}" class="${p.Urgent ? 'urgent' : ''}">
+      <td class="ordre">
+        <span class="lbl">Sujet</span><textarea rows="1" data-f="Sujet">${esc(p.Sujet)}</textarea>
+        <span class="lbl">Détail</span><textarea rows="1" data-f="Detail">${esc(p.Detail)}</textarea>
+      </td>
+      <td class="cr">
+        <span class="lbl">Discussion</span><textarea rows="1" data-f="Discussion">${esc(p.Discussion)}</textarea>
+        <span class="lbl">Décision</span><textarea rows="1" data-f="Decision">${esc(p.Decision)}</textarea>
+      </td>
+      <td class="cr">
+        <span class="lbl">Qui</span>
+        <textarea rows="1" data-f="Qui" placeholder="Texte libre…">${esc(p.Qui)}</textarea>
+        <select class="pick" data-pick="Qui">
+          <option value="">＋ membre</option>
+          ${pickOptions()}
+        </select>
+        <div class="meta">
+          <label class="urg ${p.Urgent ? 'on' : ''}"><input type="checkbox" data-f="Urgent" ${p.Urgent ? 'checked' : ''}> Urgent</label>
+          <span class="linkcell ${safeUrl(p.Lien) ? '' : 'empty'}" title="Cliquer pour ajouter ou modifier le lien">${linkCellInner(p.Lien)}</span>
+        </div>
+      </td>
+      <td class="cr sv" data-suivi="${esc(p.Suivi)}">
+        <select data-f="Suivi">
+          ${SUIVIS.map(s => `<option ${s === p.Suivi ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </td>
+      <td class="center"><button class="del" title="Supprimer ce point">✕</button></td>
+    </tr>`).join('') ||
+    `<tr><td colspan="5" class="muted" style="text-align:center;padding:16px">Aucun point. Clique sur « Ajouter un point ».</td></tr>`;
+  document.querySelectorAll('#tbody textarea').forEach(autosize);
+  lockViewer();
+}
+
+function autosize(el) {
+  el.style.height = 'auto';
+  el.style.height = (el.scrollHeight + 2) + 'px';
+}
+
+/* ============ Actions ============ */
+// Changement de réunion
+$('typeTags').addEventListener('click', (e) => {
+  const t = e.target.closest('.mtag');
+  if (t) selectType(Number(t.dataset.id));
+});
+$('meetingTags').addEventListener('click', (e) => {
+  const t = e.target.closest('.mtag');
+  if (t) selectMeeting(Number(t.dataset.id));
+});
+$('olderSelect').addEventListener('change', (e) => {
+  const id = Number(e.target.value);
+  if (id) selectMeeting(id);
+});
+
+// Création de réunion
+$('addMeeting').addEventListener('click', async () => {
+  const v = $('newDate').value; // AAAA-MM-JJ
+  if (!v) { showError('Choisis une date pour la nouvelle réunion.'); return; }
+  showError('');
+  const [y, m, d] = v.split('-').map(Number);
+  const sec = Math.floor(Date.UTC(y, m - 1, d) / 1000);
+  const rec = { Date: sec };
+  if (S.curType) rec.Type = S.curType;          // la réunion hérite du type sélectionné
+  const [id] = await act([['AddRecord', T.reunions, null, rec]]);
+  S.current = id;
+  $('presenceCard').open = true;
+  S.keep.clear();
+  await loadAll();
+});
+
+// Présences : clic = changement de statut
+$('tags').addEventListener('click', async (e) => {
+  if (VIEW) return;
+  const tag = e.target.closest('.tag');
+  if (!tag || !S.current) return;
+  const memberId = Number(tag.dataset.member);
+  const p = presenceOf(memberId);
+  try {
+    if (!p) {
+      const [id] = await act([['AddRecord', T.presences, null, { Reunion: S.current, Membre: memberId, Statut: STATUTS[0] }]]);
+      S.presences.push({ id, Reunion: S.current, Membre: memberId, Statut: STATUTS[0] });
+    } else {
+      const idx = STATUTS.indexOf(p.Statut);
+      if (idx >= 0 && idx < STATUTS.length - 1) {
+        p.Statut = STATUTS[idx + 1];
+        await act([['UpdateRecord', T.presences, p.id, { Statut: p.Statut }]]);
+      } else {
+        S.presences = S.presences.filter(x => x.id !== p.id);
+        await act([['RemoveRecord', T.presences, p.id]]);
+      }
+    }
+    renderPresence();
+  } catch (err) { showError('Erreur d\'enregistrement : ' + esc(err.message || err)); }
+});
+$('memberFilter').addEventListener('input', renderPresence);
+$('showAllMembers').addEventListener('change', renderPresence);
+
+// Ajout d'un point
+$('addPoint').addEventListener('click', async () => {
+  if (!S.current) return;
+  const maxOrdre = Math.max(0, ...pointsOfCurrent().map(p => p.Ordre || 0));
+  const rec = { Reunion: S.current, Ordre: maxOrdre + 1, Sujet: '', Detail: '', Lien: '', Discussion: '', Decision: '', Qui: '', Urgent: false, Suivi: SUIVIS[0] };
+  try {
+    const [id] = await act([['AddRecord', T.points, null, rec]]);
+    S.points.push({ id, ...rec });
+    renderPoints();
+    const last = document.querySelector(`#tbody tr[data-id="${id}"] textarea`);
+    if (last) last.focus();
+  } catch (err) { showError('Erreur d\'enregistrement : ' + esc(err.message || err)); }
+});
+
+// Édition dans le tableau
+const tbody = $('tbody');
+tbody.addEventListener('input', (e) => { if (e.target.tagName === 'TEXTAREA') autosize(e.target); });
+
+tbody.addEventListener('change', async (e) => {
+  const el = e.target;
+  const tr = el.closest('tr');
+  if (el.dataset.pick && tr) {
+    const name = el.value;
+    if (!name) return;
+    const ta = tr.querySelector('textarea[data-f="Qui"]');
+    const cur = ta.value.trim();
+    ta.value = cur ? cur + ', ' + name : name;
+    el.value = '';
+    autosize(ta);
+    ta.dispatchEvent(new Event('change', { bubbles: true }));
+    return;
+  }
+  if (!tr || !el.dataset.f) return;
+  const id = Number(tr.dataset.id);
+  const field = el.dataset.f;
+  const value = el.type === 'checkbox' ? el.checked : el.value;
+  const p = S.points.find(x => x.id === id);
+  if (p) p[field] = value;
+  if (field === 'Urgent') { tr.classList.toggle('urgent', value); el.closest('.urg').classList.toggle('on', value); }
+  if (field === 'Suivi') el.closest('.sv').dataset.suivi = value;
+  try { await act([['UpdateRecord', T.points, id, { [field]: value }]]); }
+  catch (err) { showError('Erreur d\'enregistrement : ' + esc(err.message || err)); }
+});
+
+tbody.addEventListener('click', async (e) => {
+  if (VIEW) return;
+  const lc = e.target.closest('.linkcell');
+  if (lc) {
+    if (e.target.closest('a')) return;          // clic sur le picto : ouvre le lien
+    openLinkModal(Number(lc.closest('tr').dataset.id));
+    return;
+  }
+  if (!e.target.classList.contains('del')) return;
+  const tr = e.target.closest('tr');
+  const id = Number(tr.dataset.id);
+  const p = S.points.find(x => x.id === id);
+  if (!confirm(`Supprimer le point « ${(p && p.Sujet) || 'sans sujet'} » ?`)) return;
+  try {
+    await act([['RemoveRecord', T.points, id]]);
+    S.points = S.points.filter(x => x.id !== id);
+    renderPoints();
+  } catch (err) { showError('Erreur : ' + esc(err.message || err)); }
+});
+
+/* ============ Points en suspens des réunions précédentes ============ */
+const fmtShort = (sec) => typeof sec === 'number'
+  ? new Date(sec * 1000).toLocaleDateString('fr-FR', { timeZone: 'UTC', day: '2-digit', month: '2-digit', year: 'numeric' })
+  : '?';
+
+function backlogPoints() {
+  const cur = S.meetings.find(m => m.id === S.current);
+  if (!cur) return [];
+  const byId = new Map(S.meetings.map(m => [m.id, m]));
+  return S.points.filter(p => {
+    const m = byId.get(p.Reunion);
+    if (!m || m.id === cur.id) return false;
+    if ((m.Date || 0) >= (cur.Date || 0)) return false;   // uniquement les réunions antérieures
+    if ((m.Type || 0) !== (cur.Type || 0)) return false;  // et du même type
+    return OPEN.includes(p.Suivi) || S.keep.has(p.id);
+  }).sort((a, b) =>
+    (byId.get(a.Reunion).Date || 0) - (byId.get(b.Reunion).Date || 0) || (a.Ordre || 0) - (b.Ordre || 0) || a.id - b.id);
+}
+
+function bf(label, val, first) {
+  return val ? `<div class="bf"><span class="lbl" ${first ? 'style="margin-top:0"' : ''}>${label}</span>${esc(val)}</div>` : '';
+}
+
+function renderBacklog() {
+  const card = $('backlogCard');
+  card.style.display = S.current ? '' : 'none';
+  if (!S.current) return;
+  const byId = new Map(S.meetings.map(m => [m.id, m]));
+  const rows = backlogPoints();
+  const nOpen = rows.filter(p => OPEN.includes(p.Suivi)).length;
+  $('backlogSummary').textContent = `— ${nOpen} à traiter`;
+  $('backlogBody').innerHTML = rows.map(p => `
+    <tr data-id="${p.id}" class="${p.Urgent ? 'urgent' : ''}">
+      <td class="ro">${esc(fmtShort(byId.get(p.Reunion).Date))}</td>
+      <td class="ro pw"><strong>${esc(p.Sujet)}</strong>${bf('Détail', p.Detail)}</td>
+      <td class="ro pw">${bf('Discussion', p.Discussion, true)}${bf('Décision', p.Decision)}</td>
+      <td class="ro">
+        ${p.Qui ? `<div class="bf pw"><span class="lbl" style="margin-top:0">Qui</span>${esc(p.Qui)}</div>` : ''}
+        <div class="meta">
+          <label class="urg ${p.Urgent ? 'on' : ''}"><input type="checkbox" data-f="Urgent" ${p.Urgent ? 'checked' : ''}> Urgent</label>
+          ${linkIcon(p.Lien)}
+        </div>
+      </td>
+      <td class="cr sv" data-suivi="${esc(p.Suivi)}">
+        <select data-f="Suivi">
+          ${SUIVIS.map(s => `<option ${s === p.Suivi ? 'selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </td>
+    </tr>`).join('') ||
+    `<tr><td colspan="5" class="muted" style="text-align:center;padding:12px">Aucun point en suspens.</td></tr>`;
+  lockViewer();
+}
+
+$('backlogBody').addEventListener('change', async (e) => {
+  const el = e.target;
+  const tr = el.closest('tr');
+  if (!tr || !['Suivi', 'Urgent'].includes(el.dataset.f)) return;
+  const id = Number(tr.dataset.id);
+  const p = S.points.find(x => x.id === id);
+  if (!p) return;
+  try {
+    if (el.dataset.f === 'Urgent') {
+      p.Urgent = el.checked;
+      tr.classList.toggle('urgent', p.Urgent);
+      el.closest('.urg').classList.toggle('on', p.Urgent);
+      await act([['UpdateRecord', T.points, id, { Urgent: p.Urgent }]]);
+    } else {
+      p.Suivi = el.value;
+      S.keep.add(id);
+      await act([['UpdateRecord', T.points, id, { Suivi: p.Suivi }]]);
+      renderBacklog();
+    }
+  } catch (err) { showError('Erreur d\'enregistrement : ' + esc(err.message || err)); }
+});
+
+/* ============ Modale de saisie du lien ============ */
+let modalPointId = null;
+
+function openLinkModal(id) {
+  const p = S.points.find(x => x.id === id);
+  if (!p) return;
+  modalPointId = id;
+  $('linkModalTitle').textContent = p.Sujet || '(sans sujet)';
+  $('linkInput').value = p.Lien || '';
+  $('linkClear').style.display = p.Lien ? '' : 'none';
+  $('linkModal').hidden = false;
+  setTimeout(() => { $('linkInput').focus(); $('linkInput').select(); }, 0);
+}
+
+function closeLinkModal() {
+  $('linkModal').hidden = true;
+  modalPointId = null;
+}
+
+async function saveLink(raw) {
+  const id = modalPointId;
+  const p = S.points.find(x => x.id === id);
+  if (!p) { closeLinkModal(); return; }
+  const url = normalizeUrl(raw);
+  p.Lien = url;
+  closeLinkModal();
+  const lc = document.querySelector(`#tbody tr[data-id="${id}"] .linkcell`);
+  if (lc) { lc.innerHTML = linkCellInner(url); lc.classList.toggle('empty', !safeUrl(url)); }
+  try { await act([['UpdateRecord', T.points, id, { Lien: url }]]); }
+  catch (err) { showError('Erreur d\'enregistrement : ' + esc(err.message || err)); }
+}
+
+$('linkSave').addEventListener('click', () => saveLink($('linkInput').value));
+$('linkClear').addEventListener('click', () => saveLink(''));
+$('linkCancel').addEventListener('click', closeLinkModal);
+$('linkTest').addEventListener('click', () => {
+  const u = safeUrl(normalizeUrl($('linkInput').value));
+  if (u) window.open(u, '_blank', 'noopener,noreferrer');
+});
+$('linkInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveLink($('linkInput').value); });
+$('linkModal').addEventListener('click', (e) => { if (e.target === $('linkModal')) closeLinkModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('linkModal').hidden) closeLinkModal(); });
+
+/* ============ Gestion des membres (CRUD) ============ */
+const typeLabel = (t) => t.Code || t.Titre || '(sans code)';
+
+function pickOptions() {
+  const opt = (m) => `<option value="${esc(memberLabel(m))}">${esc(memberLabel(m))}</option>`;
+  const mine = (S.hasComm && S.curType) ? S.members.filter(m => commOf(m).includes(S.curType)) : [];
+  const others = S.members.filter(m => !mine.includes(m));
+  if (!mine.length) return others.map(opt).join('');
+  return `<optgroup label="Cette communauté">${mine.map(opt).join('')}</optgroup><optgroup label="Autres membres">${others.map(opt).join('')}</optgroup>`;
+}
+
+function renderMembers() {
+  $('membersBanner').innerHTML = S.hasComm ? '' :
+    `<div class="banner">La colonne « ${COMM} » (liste de références vers « ${T.types} ») n'existe pas encore dans la table « ${T.membres} ».
+     <button id="createComm" style="margin-left:8px">Créer la colonne</button></div>`;
+  const sel = $('mCommFilter');
+  sel.innerHTML = '<option value="all">Toutes les communautés</option>' +
+    S.types.map(t => `<option value="${t.id}">${esc(typeLabel(t))}</option>`).join('') +
+    (S.hasComm ? '<option value="none">Sans communauté</option>' : '');
+  if (![...sel.options].some(o => o.value === String(S.mComm))) S.mComm = 'all';
+  sel.value = String(S.mComm);
+  const f = $('mFilter').value.trim().toLowerCase();
+  const list = S.members.filter(m => {
+    if (S.hasComm && S.mComm === 'none' && commOf(m).length) return false;
+    if (S.hasComm && S.mComm !== 'all' && S.mComm !== 'none' && !commOf(m).includes(Number(S.mComm))) return false;
+    return !f || (memberLabel(m) + ' ' + (m.Direction || '') + ' ' + (m.Site || '')).toLowerCase().includes(f);
+  });
+  $('membersSummary').textContent = `— ${list.length} / ${S.members.length}`;
+  $('membersBody').innerHTML = list.map(m => {
+    const mine = commOf(m);
+    const chips = S.hasComm
+      ? S.types.map(t => `<label class="${mine.includes(t.id) ? 'on' : ''}"><input type="checkbox" data-tid="${t.id}" ${mine.includes(t.id) ? 'checked' : ''}>${esc(typeLabel(t))}</label>`).join('')
+      : '<span class="muted">—</span>';
+    return `<tr data-id="${m.id}">
+      <td><input type="text" data-mf="Prenom" value="${esc(m.Prenom)}"></td>
+      <td><input type="text" data-mf="Nom" value="${esc(m.Nom)}"></td>
+      <td><input type="text" data-mf="Direction" value="${esc(m.Direction)}"></td>
+      <td><input type="text" data-mf="Site" value="${esc(m.Site)}"></td>
+      <td><div class="comm">${chips}</div></td>
+      <td class="center"><button class="del" title="Supprimer ce membre">✕</button></td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="6" class="muted" style="text-align:center;padding:12px">Aucun membre.</td></tr>`;
+}
+
+$('mCommFilter').addEventListener('change', (e) => { S.mComm = e.target.value; renderMembers(); });
+$('mFilter').addEventListener('input', renderMembers);
+
+// Création de la colonne Communautes (une seule fois)
+$('membersBanner').addEventListener('click', async (e) => {
+  if (e.target.id !== 'createComm') return;
+  const all = S.types.map(t => t.id);
+  const fill = S.members.length && all.length &&
+    confirm('Affecter tous les membres existants à toutes les communautés (comportement actuel) ?\nOK = oui · Annuler = colonne vide, à remplir ensuite.');
+  try {
+    await act([['AddColumn', T.membres, COMM, { type: 'RefList:' + T.types, isFormula: false, label: COMM }]]);
+    if (fill) await act([['BulkUpdateRecord', T.membres, S.members.map(m => m.id), { [COMM]: S.members.map(() => ['L', ...all]) }]]);
+    await loadAll();
+  } catch (err) { showError('Erreur : ' + esc(err.message || err)); }
+});
+
+// Ajout
+$('addMember').addEventListener('click', async () => {
+  const rec = { Prenom: '', Nom: '' };
+  if (S.hasComm && /^\d+$/.test(String(S.mComm))) rec[COMM] = ['L', Number(S.mComm)];   // hérite du filtre actif
+  try {
+    const [id] = await act([['AddRecord', T.membres, null, rec]]);
+    S.members.unshift({ id, Prenom: '', Nom: '', Direction: '', Site: '', ...(rec[COMM] ? { [COMM]: rec[COMM] } : {}) });
+    $('mFilter').value = '';
+    renderMembers(); renderPresence();
+    const inp = document.querySelector(`#membersBody tr[data-id="${id}"] input[data-mf="Prenom"]`);
+    if (inp) inp.focus();
+  } catch (err) { showError('Erreur d\'enregistrement : ' + esc(err.message || err)); }
+});
+
+// Modification (champs texte + appartenance aux communautés)
+$('membersBody').addEventListener('change', async (e) => {
+  const el = e.target, tr = el.closest('tr');
+  const m = tr && S.members.find(x => x.id === Number(tr.dataset.id));
+  if (!m) return;
+  try {
+    if (el.dataset.mf) {
+      m[el.dataset.mf] = el.value.trim();
+      await act([['UpdateRecord', T.membres, m.id, { [el.dataset.mf]: m[el.dataset.mf] }]]);
+    } else if (el.dataset.tid) {
+      const ids = new Set(commOf(m));
+      if (el.checked) ids.add(Number(el.dataset.tid)); else ids.delete(Number(el.dataset.tid));
+      m[COMM] = ['L', ...ids];
+      el.closest('label').classList.toggle('on', el.checked);
+      await act([['UpdateRecord', T.membres, m.id, { [COMM]: m[COMM] }]]);
+    } else return;
+    renderPresence(); renderPoints();
+  } catch (err) { showError('Erreur d\'enregistrement : ' + esc(err.message || err)); }
+});
+
+// Suppression (les présences du membre sont supprimées avec lui)
+$('membersBody').addEventListener('click', async (e) => {
+  if (!e.target.classList.contains('del')) return;
+  const id = Number(e.target.closest('tr').dataset.id);
+  const m = S.members.find(x => x.id === id);
+  const prs = S.presences.filter(p => p.Membre === id);
+  if (!confirm(`Supprimer « ${(m && memberLabel(m)) || 'sans nom'} » ?` +
+      (prs.length ? `\n${prs.length} présence(s) enregistrée(s) seront aussi supprimées.` : ''))) return;
+  try {
+    await act([...prs.map(p => ['RemoveRecord', T.presences, p.id]), ['RemoveRecord', T.membres, id]]);
+    S.presences = S.presences.filter(p => p.Membre !== id);
+    S.members = S.members.filter(x => x.id !== id);
+    renderMembers(); renderPresence(); renderPoints();
+  } catch (err) { showError('Erreur : ' + esc(err.message || err)); }
+});
+
+/* ============ Réunions : modification / suppression (admin) ============ */
+function renderMeetingEdit() {
+  const m = S.meetings.find(x => x.id === S.current);
+  $('meetingEdit').style.display = (m && !VIEW) ? '' : 'none';
+  if (!m) return;
+  $('editDate').value = typeof m.Date === 'number' ? new Date(m.Date * 1000).toISOString().slice(0, 10) : '';
+  $('editType').innerHTML = '<option value="0">Sans type</option>' + S.types.map(t => `<option value="${t.id}">${esc(typeLabel(t))}</option>`).join('');
+  $('editType').value = String(m.Type || 0);
+}
+
+$('saveMeeting').addEventListener('click', async () => {
+  const v = $('editDate').value;
+  if (!v || !S.current) { showError('Choisis une date.'); return; }
+  const [y, mo, d] = v.split('-').map(Number);
+  const type = Number($('editType').value) || 0;
+  try {
+    await act([['UpdateRecord', T.reunions, S.current, { Date: Math.floor(Date.UTC(y, mo - 1, d) / 1000), Type: type }]]);
+    S.curType = type;           // on suit la réunion dans sa (nouvelle) communauté
+    showError('');
+    await loadAll();
+  } catch (err) { showError('Erreur d\'enregistrement : ' + esc(err.message || err)); }
+});
+
+$('delMeeting').addEventListener('click', async () => {
+  const m = S.meetings.find(x => x.id === S.current);
+  if (!m) return;
+  const pts = S.points.filter(p => p.Reunion === m.id), prs = S.presences.filter(p => p.Reunion === m.id);
+  if (!confirm(`Supprimer la réunion du ${fmtDate(m.Date)} ?\n${pts.length} point(s) et ${prs.length} présence(s) seront aussi supprimés.`)) return;
+  try {
+    await act([...pts.map(p => ['RemoveRecord', T.points, p.id]), ...prs.map(p => ['RemoveRecord', T.presences, p.id]), ['RemoveRecord', T.reunions, m.id]]);
+    S.current = null; S.keep.clear();
+    await loadAll();
+  } catch (err) { showError('Erreur : ' + esc(err.message || err)); }
+});
+
+/* ============ Impression / PDF ============ */
+function buildPrint() {
+  const m = S.meetings.find(x => x.id === S.current);
+  if (!m) return '';
+  const t = S.types.find(x => x.id === (m.Type || 0));
+  const labels = { 'Présent': 'Présents', 'Excusé': 'Excusés', 'Absent': 'Absents' };
+  const pres = STATUTS.map(st => {
+    const names = S.presences.filter(p => p.Reunion === m.id && p.Statut === st)
+      .map(p => S.members.find(x => x.id === p.Membre)).filter(Boolean)
+      .map(memberLabel).sort((a, b) => a.localeCompare(b, 'fr'));
+    return names.length ? `<p><strong>${labels[st]} (${names.length}) :</strong> ${esc(names.join(', '))}</p>` : '';
+  }).join('') || '<p>Aucune présence renseignée.</p>';
+  const byId = new Map(S.meetings.map(x => [x.id, x]));
+  const who = (p) => esc(p.Qui) + (p.Urgent ? (p.Qui ? '<br>' : '') + '<strong>URGENT</strong>' : '');
+  const tbl = (cols, rows, empty) => rows.length
+    ? `<table><thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`
+    : `<p>${empty}</p>`;
+  const backRows = backlogPoints().filter(p => OPEN.includes(p.Suivi)).map(p =>
+    `<tr><td>${esc(fmtShort(byId.get(p.Reunion).Date))}</td><td class="pw"><strong>${esc(p.Sujet)}</strong>${bf('Détail', p.Detail)}</td><td class="pw">${who(p)}</td><td>${esc(p.Suivi)}</td></tr>`);
+  const rows = pointsOfCurrent().map(p =>
+    `<tr><td class="pw"><strong>${esc(p.Sujet)}</strong>${bf('Détail', p.Detail)}</td><td class="pw">${bf('Discussion', p.Discussion, true)}${bf('Décision', p.Decision)}</td><td class="pw">${who(p)}</td><td>${esc(p.Suivi)}</td></tr>`);
+  return `<h1>${esc((t && (t.Titre || t.Code)) || 'Réunion')} — ${esc(fmtDate(m.Date))}</h1>
+    <h2>Présences</h2>${pres}
+    <h2>Points en suspens des réunions précédentes</h2>${tbl(['Réunion', 'Sujet / Détail', 'Qui', 'Suivi'], backRows, 'Aucun point en suspens.')}
+    <h2>Ordre du jour et compte rendu</h2>${tbl(['Ordre du jour', 'Compte rendu', 'Qui', 'Suivi'], rows, 'Aucun point.')}`;
+}
+window.addEventListener('beforeprint', () => { $('printArea').innerHTML = buildPrint(); });
+$('printBtn').addEventListener('click', () => { $('printArea').innerHTML = buildPrint(); window.print(); });
+
+/* ============ Initialisation ============ */
+grist.ready({ requiredAccess: 'full' });
+// La table liée au widget (Reunions) déclenche un rechargement quand elle change
+grist.onRecords(() => { loadAll(); });
+loadAll();
+</script>
+</body>
+</html>
