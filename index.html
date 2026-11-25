@@ -119,16 +119,37 @@
   .viewer .linkcell, .viewer .tag, .viewer td textarea { cursor: default; }
   .viewer .linkcell:hover { background: none; }
   .viewer #memberFilter, .viewer .l-none, .viewer #pointsCard th:last-child { display: none !important; }
+  /* Recherche */
+  #searchResults { max-height: 240px; overflow: auto; margin-top: 6px; }
+  .hit { cursor: pointer; padding: 5px 8px; border-radius: 6px; }
+  .hit:hover { background: #eef3ff; }
+  tr.flash td { background: #fff3b0 !important; }
+  /* Éléments colorés de l'impression */
+  #printArea .chip { display: inline-block; padding: 1px 9px; margin: 2px 2px 2px 0; border-radius: 999px; border: 1px solid #ccc; font-size: 10pt; }
+  #printArea .chip.present { background: #d6f5dc; border-color: #7ccf8c; color: #14532d; }
+  #printArea .chip.excuse  { background: #fff0c9; border-color: #e6bf55; color: #7a5200; }
+  #printArea .chip.absent  { background: #fddcdc; border-color: #e68a8a; color: #8a1f1f; text-decoration: line-through; }
+  #printArea .pb { display: inline-block; padding: 1px 8px; border-radius: 999px; font-weight: 600; font-size: 9pt; white-space: nowrap; }
+  #printArea .pb[data-suivi="A faire"]          { background: #fddcdc; color: #b91c1c; }
+  #printArea .pb[data-suivi="En attente"]       { background: #ffe9c7; color: #9a5b00; }
+  #printArea .pb[data-suivi="Réalisé"]          { background: #d6f5dc; color: #14532d; }
+  #printArea .pb[data-suivi="Annulé"]           { background: #e5e7eb; color: #4b5563; text-decoration: line-through; }
+  #printArea .pb[data-suivi="Pour information"] { background: #ece4fb; color: #5b21b6; }
   /* Impression / PDF : zone dédiée, le reste de la page est masqué */
   #printArea { display: none; }
   @media print {
     body { background: #fff; padding: 0; }
     body > *:not(#printArea) { display: none !important; }
-    #printArea { display: block; color: #000; font-size: 11pt; }
-    #printArea h1 { font-size: 16pt; margin: 0 0 8px; }
-    #printArea h2 { font-size: 12pt; margin: 14px 0 6px; border-bottom: 1px solid #999; }
+    #printArea { display: block; color: #000; font-size: 11pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    #printArea h1 { font-size: 16pt; margin: 0 0 10px; padding: 10px 14px; background: #2f6fed; color: #fff; border-radius: 6px; }
+    #printArea h2 { font-size: 12pt; margin: 16px 0 6px; padding-bottom: 3px; color: #2f6fed; border-bottom: 2px solid #2f6fed; }
     #printArea table { min-width: 0; width: 100%; }
-    #printArea th, #printArea td { border: 1px solid #999; padding: 4px 6px; font-size: 10pt; }
+    #printArea th, #printArea td { border: 1px solid #c9ced6; padding: 4px 6px; font-size: 10pt; }
+    #printArea th { background: #eef1f5; text-align: left; }
+    #printArea .t-back th { background: #fff0c9; }
+    #printArea .t-cr th:nth-child(1) { background: #eef3ff; }
+    #printArea .t-cr th:nth-child(2) { background: #f0faf3; }
+    #printArea tr.urgent td:first-child { border-left: 4px solid #e05a5a; }
     #printArea tr { break-inside: avoid; }
     #printArea thead { display: table-header-group; }
   }
@@ -158,6 +179,10 @@
     <select id="editType"></select>
     <button id="saveMeeting">Enregistrer</button>
     <button id="delMeeting" style="margin-left:auto; color:#b91c1c">Supprimer la réunion</button>
+  </div>
+  <div style="margin-top:8px; padding-top:8px; border-top:1px solid var(--border)">
+    <input type="text" id="searchBox" placeholder="🔍 Rechercher un point dans les réunions de cette communauté (sujet, détail, discussion, décision, qui)…" style="width:100%">
+    <div id="searchResults"></div>
   </div>
 </div>
 
@@ -211,7 +236,10 @@
 </details>
 
 <div class="card" id="pointsCard">
-  <h2>Ordre du jour et compte rendu</h2>
+  <div class="row" style="justify-content:space-between; margin-bottom:8px">
+    <h2 style="margin:0">Ordre du jour et compte rendu</h2>
+    <select id="pFilter" class="admin-only" title="Filtrer les points par suivi"></select>
+  </div>
   <div class="table-wrap">
     <table>
       <thead>
@@ -388,6 +416,7 @@ function renderAll() {
   renderPoints();
   renderMembers();
   renderMeetingEdit();
+  renderSearch();
 }
 
 const MAX_TAGS = VIEW ? 200 : 10;   // nombre de réunions affichées sous forme de tags (les plus récentes)
@@ -468,7 +497,8 @@ function renderPoints() {
   const card = $('pointsCard');
   card.style.display = S.current ? '' : 'none';
   if (!S.current) return;
-  const rows = pointsOfCurrent();
+  const all = pointsOfCurrent();
+  const rows = (VIEW || S.pf === 'all') ? all : all.filter(p => S.pf === 'open' ? OPEN.includes(p.Suivi) : p.Suivi === S.pf);
   if (VIEW) { renderPointsView(rows); return; }
   $('tbody').innerHTML = rows.map(p => `
     <tr data-id="${p.id}" class="${p.Urgent ? 'urgent' : ''}">
@@ -499,7 +529,7 @@ function renderPoints() {
       </td>
       <td class="center"><button class="del" title="Supprimer ce point">✕</button></td>
     </tr>`).join('') ||
-    `<tr><td colspan="5" class="muted" style="text-align:center;padding:16px">Aucun point. Clique sur « Ajouter un point ».</td></tr>`;
+    `<tr><td colspan="5" class="muted" style="text-align:center;padding:16px">${all.length ? 'Aucun point ne correspond au filtre.' : 'Aucun point. Clique sur « Ajouter un point ».'}</td></tr>`;
   document.querySelectorAll('#tbody textarea').forEach(autosize);
   lockViewer();
 }
@@ -584,6 +614,7 @@ $('showAllMembers').addEventListener('change', renderPresence);
 // Ajout d'un point
 $('addPoint').addEventListener('click', async () => {
   if (!S.current) return;
+  if (S.pf !== 'all' && S.pf !== 'open' && S.pf !== SUIVIS[0]) { S.pf = 'all'; $('pFilter').value = 'all'; }   // le nouveau point doit rester visible
   const maxOrdre = Math.max(0, ...pointsOfCurrent().map(p => p.Ordre || 0));
   const rec = { Reunion: S.current, Ordre: maxOrdre + 1, Sujet: '', Detail: '', Lien: '', Discussion: '', Decision: '', Qui: '', Urgent: false, Suivi: SUIVIS[0] };
   try {
@@ -915,28 +946,62 @@ function buildPrint() {
   if (!m) return '';
   const t = S.types.find(x => x.id === (m.Type || 0));
   const labels = { 'Présent': 'Présents', 'Excusé': 'Excusés', 'Absent': 'Absents' };
+  const PCLS = { 'Présent': 'present', 'Excusé': 'excuse', 'Absent': 'absent' };
   const pres = STATUTS.map(st => {
     const names = S.presences.filter(p => p.Reunion === m.id && p.Statut === st)
       .map(p => S.members.find(x => x.id === p.Membre)).filter(Boolean)
       .map(memberLabel).sort((a, b) => a.localeCompare(b, 'fr'));
-    return names.length ? `<p><strong>${labels[st]} (${names.length}) :</strong> ${esc(names.join(', '))}</p>` : '';
+    return names.length ? `<p><strong>${labels[st]} (${names.length})</strong><br>${names.map(n => `<span class="chip ${PCLS[st]}">${esc(n)}</span>`).join(' ')}</p>` : '';
   }).join('') || '<p>Aucune présence renseignée.</p>';
   const byId = new Map(S.meetings.map(x => [x.id, x]));
   const who = (p) => esc(p.Qui) + (p.Urgent ? (p.Qui ? '<br>' : '') + '<strong>URGENT</strong>' : '');
-  const tbl = (cols, rows, empty) => rows.length
-    ? `<table><thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`
+  const tbl = (cols, rows, empty, cls) => rows.length
+    ? `<table class="${cls}"><thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`
     : `<p>${empty}</p>`;
   const backRows = backlogPoints().filter(p => OPEN.includes(p.Suivi)).map(p =>
-    `<tr><td>${esc(fmtShort(byId.get(p.Reunion).Date))}</td><td class="pw"><strong>${esc(p.Sujet)}</strong>${bf('Détail', p.Detail)}</td><td class="pw">${who(p)}</td><td>${esc(p.Suivi)}</td></tr>`);
+    `<tr class="${p.Urgent ? 'urgent' : ''}"><td>${esc(fmtShort(byId.get(p.Reunion).Date))}</td><td class="pw"><strong>${esc(p.Sujet)}</strong>${bf('Détail', p.Detail)}</td><td class="pw">${who(p)}</td><td><span class="pb" data-suivi="${esc(p.Suivi)}">${esc(p.Suivi)}</span></td></tr>`);
   const rows = pointsOfCurrent().map(p =>
-    `<tr><td class="pw"><strong>${esc(p.Sujet)}</strong>${bf('Détail', p.Detail)}</td><td class="pw">${bf('Discussion', p.Discussion, true)}${bf('Décision', p.Decision)}</td><td class="pw">${who(p)}</td><td>${esc(p.Suivi)}</td></tr>`);
+    `<tr class="${p.Urgent ? 'urgent' : ''}"><td class="pw"><strong>${esc(p.Sujet)}</strong>${bf('Détail', p.Detail)}</td><td class="pw">${bf('Discussion', p.Discussion, true)}${bf('Décision', p.Decision)}</td><td class="pw">${who(p)}</td><td><span class="pb" data-suivi="${esc(p.Suivi)}">${esc(p.Suivi)}</span></td></tr>`);
   return `<h1>${esc((t && (t.Titre || t.Code)) || 'Réunion')} — ${esc(fmtDate(m.Date))}</h1>
     <h2>Présences</h2>${pres}
-    <h2>Points en suspens des réunions précédentes</h2>${tbl(['Réunion', 'Sujet / Détail', 'Qui', 'Suivi'], backRows, 'Aucun point en suspens.')}
-    <h2>Ordre du jour et compte rendu</h2>${tbl(['Ordre du jour', 'Compte rendu', 'Qui', 'Suivi'], rows, 'Aucun point.')}`;
+    <h2>Points en suspens des réunions précédentes</h2>${tbl(['Réunion', 'Sujet / Détail', 'Qui', 'Suivi'], backRows, 'Aucun point en suspens.', 't-back')}
+    <h2>Ordre du jour et compte rendu</h2>${tbl(['Ordre du jour', 'Compte rendu', 'Qui', 'Suivi'], rows, 'Aucun point.', 't-cr')}`;
 }
 window.addEventListener('beforeprint', () => { $('printArea').innerHTML = buildPrint(); });
 $('printBtn').addEventListener('click', () => { $('printArea').innerHTML = buildPrint(); window.print(); });
+
+/* ============ Recherche (tous modes) + filtre de suivi (admin) ============ */
+S.pf = 'all';
+$('pFilter').innerHTML = '<option value="all">Tous les suivis</option><option value="open">À traiter (À faire + En attente)</option>' +
+  SUIVIS.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+$('pFilter').addEventListener('change', (e) => { S.pf = e.target.value; renderPoints(); });
+
+const norm = (s) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+function renderSearch() {
+  const q = norm($('searchBox').value.trim());
+  const box = $('searchResults');
+  if (q.length < 2) { box.innerHTML = ''; return; }
+  const byId = new Map(meetingsOfType().map(m => [m.id, m]));
+  const hits = S.points
+    .filter(p => byId.has(p.Reunion) && norm([p.Sujet, p.Detail, p.Discussion, p.Decision, p.Qui].join(' ')).includes(q))
+    .sort((a, b) => (byId.get(b.Reunion).Date || 0) - (byId.get(a.Reunion).Date || 0) || (a.Ordre || 0) - (b.Ordre || 0));
+  box.innerHTML = hits.length
+    ? `<div class="muted" style="margin:2px 0">${hits.length} résultat(s)${hits.length > 50 ? ' — 50 premiers affichés' : ''}</div>` +
+      hits.slice(0, 50).map(p => `<div class="hit" data-m="${p.Reunion}" data-p="${p.id}">
+        <span class="muted">${esc(fmtShort(byId.get(p.Reunion).Date))}</span> <strong>${esc(p.Sujet || '(sans sujet)')}</strong>
+        <span class="muted">· ${esc(p.Suivi)}${p.Qui ? ' · ' + esc(p.Qui) : ''}</span></div>`).join('')
+    : '<div class="muted" style="margin:4px 0">Aucun résultat.</div>';
+}
+$('searchBox').addEventListener('input', renderSearch);
+$('searchResults').addEventListener('click', (e) => {
+  const h = e.target.closest('.hit');
+  if (!h) return;
+  S.pf = 'all'; $('pFilter').value = 'all';       // le point trouvé ne doit pas être masqué par le filtre
+  selectMeeting(Number(h.dataset.m));
+  const tr = document.querySelector(`#tbody tr[data-id="${h.dataset.p}"]`);
+  if (tr) { tr.scrollIntoView({ block: 'center', behavior: 'smooth' }); tr.classList.add('flash'); setTimeout(() => tr.classList.remove('flash'), 2500); }
+});
 
 /* ============ Initialisation ============ */
 grist.ready({ requiredAccess: 'full' });
