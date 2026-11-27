@@ -124,6 +124,7 @@
   .hit { cursor: pointer; padding: 5px 8px; border-radius: 6px; }
   .hit:hover { background: #eef3ff; }
   tr.flash td { background: #fff3b0 !important; }
+  #printArea a { color: #1d4ed8; text-decoration: underline; word-break: break-all; }
   /* Éléments colorés de l'impression */
   #printArea .chip { display: inline-block; padding: 1px 9px; margin: 2px 2px 2px 0; border-radius: 999px; border: 1px solid #ccc; font-size: 10pt; }
   #printArea .chip.present { background: #d6f5dc; border-color: #7ccf8c; color: #14532d; }
@@ -337,6 +338,13 @@ const normalizeUrl = (u) => {
 const linkCellInner = (u) => linkIcon(u) + `<span class="editlink">${safeUrl(u) ? '✎' : '＋ lien'}</span>`;
 const linkIcon = (u) => safeUrl(u)
   ? `<a class="lnkicon" href="${esc(u)}" target="_blank" rel="noopener noreferrer" title="Ouvrir le lien">🔗</a>` : '';
+// Texte échappé dont les URL (http(s)://… ou www.…) deviennent de vrais liens <a href>
+const linkify = (text) => esc(text).replace(/(?:https?:\/\/|www\.)(?:(?!&(?:quot|#39|lt|gt);)\S)+/gi, (m) => {
+  const trail = (m.match(/[.,;:!?)\]]+$/) || [''])[0];
+  const url = trail ? m.slice(0, -trail.length) : m;
+  const href = /^www\./i.test(url) ? 'https://' + url : url;
+  return `<a href="${href}">${url}</a>${trail}`;
+});
 const memberLabel = (m) => `${m.Prenom || ''} ${m.Nom || ''}`.trim();
 
 function showError(msg) {
@@ -695,8 +703,8 @@ function backlogPoints() {
     (byId.get(a.Reunion).Date || 0) - (byId.get(b.Reunion).Date || 0) || (a.Ordre || 0) - (b.Ordre || 0) || a.id - b.id);
 }
 
-function bf(label, val, first) {
-  return val ? `<div class="bf"><span class="lbl" ${first ? 'style="margin-top:0"' : ''}>${label}</span>${esc(val)}</div>` : '';
+function bf(label, val, first, linked) {
+  return val ? `<div class="bf"><span class="lbl" ${first ? 'style="margin-top:0"' : ''}>${label}</span>${linked ? linkify(val) : esc(val)}</div>` : '';
 }
 
 function renderBacklog() {
@@ -954,14 +962,16 @@ function buildPrint() {
     return names.length ? `<p><strong>${labels[st]} (${names.length})</strong><br>${names.map(n => `<span class="chip ${PCLS[st]}">${esc(n)}</span>`).join(' ')}</p>` : '';
   }).join('') || '<p>Aucune présence renseignée.</p>';
   const byId = new Map(S.meetings.map(x => [x.id, x]));
-  const who = (p) => esc(p.Qui) + (p.Urgent ? (p.Qui ? '<br>' : '') + '<strong>URGENT</strong>' : '');
+  const bfp = (l, v, f) => bf(l, v, f, true);       // texte libre : les URL deviennent cliquables dans le PDF
+  const who = (p) => [esc(p.Qui), p.Urgent ? '<strong>URGENT</strong>' : '',
+    safeUrl(p.Lien) ? `<a href="${esc(p.Lien)}">${esc(p.Lien)}</a>` : ''].filter(Boolean).join('<br>');
   const tbl = (cols, rows, empty, cls) => rows.length
     ? `<table class="${cls}"><thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`
     : `<p>${empty}</p>`;
   const backRows = backlogPoints().filter(p => OPEN.includes(p.Suivi)).map(p =>
-    `<tr class="${p.Urgent ? 'urgent' : ''}"><td>${esc(fmtShort(byId.get(p.Reunion).Date))}</td><td class="pw"><strong>${esc(p.Sujet)}</strong>${bf('Détail', p.Detail)}</td><td class="pw">${who(p)}</td><td><span class="pb" data-suivi="${esc(p.Suivi)}">${esc(p.Suivi)}</span></td></tr>`);
+    `<tr class="${p.Urgent ? 'urgent' : ''}"><td>${esc(fmtShort(byId.get(p.Reunion).Date))}</td><td class="pw"><strong>${esc(p.Sujet)}</strong>${bfp('Détail', p.Detail)}</td><td class="pw">${who(p)}</td><td><span class="pb" data-suivi="${esc(p.Suivi)}">${esc(p.Suivi)}</span></td></tr>`);
   const rows = pointsOfCurrent().map(p =>
-    `<tr class="${p.Urgent ? 'urgent' : ''}"><td class="pw"><strong>${esc(p.Sujet)}</strong>${bf('Détail', p.Detail)}</td><td class="pw">${bf('Discussion', p.Discussion, true)}${bf('Décision', p.Decision)}</td><td class="pw">${who(p)}</td><td><span class="pb" data-suivi="${esc(p.Suivi)}">${esc(p.Suivi)}</span></td></tr>`);
+    `<tr class="${p.Urgent ? 'urgent' : ''}"><td class="pw"><strong>${esc(p.Sujet)}</strong>${bfp('Détail', p.Detail)}</td><td class="pw">${bfp('Discussion', p.Discussion, true)}${bfp('Décision', p.Decision)}</td><td class="pw">${who(p)}</td><td><span class="pb" data-suivi="${esc(p.Suivi)}">${esc(p.Suivi)}</span></td></tr>`);
   return `<h1>${esc((t && (t.Titre || t.Code)) || 'Réunion')} — ${esc(fmtDate(m.Date))}</h1>
     <h2>Présences</h2>${pres}
     <h2>Points en suspens des réunions précédentes</h2>${tbl(['Réunion', 'Sujet / Détail', 'Qui', 'Suivi'], backRows, 'Aucun point en suspens.', 't-back')}
